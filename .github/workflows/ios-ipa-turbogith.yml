@@ -75,20 +75,16 @@ jobs:
           cd sources
           xcodebuild -resolvePackageDependencies -project IPTV.xcodeproj -scheme IPTV-iOS -derivedDataPath build
 
-      - name: Patch Realm s2 (std::is_pod interdit par Clang recent)
+      - name: Patch Realm s2 (DECLARE_POD + PROPAGATE)
         run: |
           chmod u+w sources/build/SourcePackages/checkouts/realm-core/src/external/s2/base/macros.h
           python3 - <<'PYEOF'
-          import os, pathlib, re
+          import os, pathlib, subprocess
           f = pathlib.Path("sources/build/SourcePackages/checkouts/realm-core/src/external/s2/base/macros.h")
           assert f.exists(), "macros.h introuvable (le pre-resolve a echoue ?)"
+          os.chmod(f, 0o644)
           t = f.read_text()
-          if "S2_PRAGMA_PUSH_INVALID_SPEC" in t:
-              print("deja patche")
-          else:
-              pat = re.compile(r"#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT\(TemplateName\).*?typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT", re.DOTALL)
-              assert pat.search(t), "bloc macro introuvable"
-              lines = [
+          pragma = [
                   "#if defined(__clang__) && defined(__has_warning)",
                   "#if __has_warning(\"-Winvalid-specialization\")",
                   "#define S2_PRAGMA_PUSH_INVALID_SPEC _Pragma(\"clang diagnostic push\") _Pragma(\"clang diagnostic warning \\\"-Winvalid-specialization\\\"\")",
@@ -101,18 +97,51 @@ jobs:
                   "#define S2_PRAGMA_PUSH_INVALID_SPEC",
                   "#define S2_PRAGMA_POP_INVALID_SPEC",
                   "#endif",
-                  "#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \\",
-                  "  S2_PRAGMA_PUSH_INVALID_SPEC                                           \\",
-                  "  namespace std {                                                       \\",
-                  "  template <typename T> struct is_pod<TemplateName<T> > : std::is_trivial<T> { }; \\",
-                  "  }                                                                      \\",
-                  "  S2_PRAGMA_POP_INVALID_SPEC                                            \\",
-                  "  typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT",
               ]
-              new = "\n".join(lines) + "\n"
-              os.chmod(f, 0o644)
-              f.write_text(pat.sub(lambda _m: new, t))
-              print("patche OK")
+          declare_body = [
+                  "#define DECLARE_POD(TypeName)                       \\",
+                  "S2_PRAGMA_PUSH_INVALID_SPEC                         \\",
+                  "namespace std {                                     \\",
+                  "template<> struct is_pod<TypeName> : true_type { }; \\",
+                  "}                                                   \\",
+                  "S2_PRAGMA_POP_INVALID_SPEC                          \\",
+                  "typedef int Dummy_Type_For_DECLARE_POD              \\",
+              ]
+          propagate_body = [
+                  "#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \\",
+                  "S2_PRAGMA_PUSH_INVALID_SPEC                                           \\",
+                  "namespace std {                                                       \\",
+                  "template <typename T> struct is_pod<TemplateName<T> > : std::is_trivial<T> { }; \\",
+                  "}                                                                      \\",
+                  "S2_PRAGMA_POP_INVALID_SPEC                                            \\",
+                  "typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT",
+              ]
+          ls = t.split("\n")
+          def idx_start(prefix):
+              for i, l in enumerate(ls):
+                  if l.startswith(prefix):
+                  return i
+              raise AssertionError("introuvable: " + prefix)
+          if not any(l.startswith("#define S2_PRAGMA_PUSH_INVALID_SPEC") for l in ls):
+              k = idx_start("#define DECLARE_POD(TypeName)")
+              ls[k:k] = pragma
+          i = idx_start("#define DECLARE_POD(TypeName)")
+          if not ls[i + 1].startswith("S2_PRAGMA_PUSH_INVALID_SPEC"):
+              assert ls[i + 1].strip().startswith("namespace std {") and ls[i + 1].strip().endswith("\\"), ls[i + 1]
+              assert "struct is_pod<TypeName>" in ls[i + 2], ls[i + 2]
+              assert ls[i + 4].strip().startswith("typedef int Dummy_Type_For_DECLARE_POD"), ls[i + 4]
+              ls[i:i + 5] = declare_body
+          j = idx_start("#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)")
+          if not ls[j + 1].startswith("S2_PRAGMA_PUSH_INVALID_SPEC"):
+              assert ls[j + 1].strip().startswith("namespace std {") and ls[j + 1].strip().endswith("\\"), ls[j + 1]
+              assert "struct is_pod<TemplateName<T> >" in ls[j + 2], ls[j + 2]
+              assert ls[j + 4].strip().startswith("typedef int Dummy_Type_For_PROPAGATE"), ls[j + 4]
+              ls[j:j + 5] = propagate_body
+          f.write_text("\n".join(ls))
+          r = subprocess.run(["grep", "-rn", "struct is_pod", "sources/build/SourcePackages/checkouts/realm-core/src/external/s2"], capture_output=True, text=True)
+          print("SITES is_pod restants:")
+          print(r.stdout[:3000])
+          print("patche OK")
           PYEOF
 
       - name: Build (unsigned, pour sideload)
