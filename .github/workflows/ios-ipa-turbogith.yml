@@ -70,6 +70,48 @@ jobs:
           fi
           ls -d GoogleCast.xcframework
 
+      - name: Pre-resolve les paquets Swift (pour patcher Realm avant compile)
+        run: |
+          cd sources
+          xcodebuild -resolvePackageDependencies -project IPTV.xcodeproj -scheme IPTV-iOS -derivedDataPath build
+
+      - name: Patch Realm s2 (std::is_pod interdit par Clang recent)
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib, re
+          f = pathlib.Path("sources/build/SourcePackages/checkouts/realm-core/src/external/s2/base/macros.h")
+          assert f.exists(), "macros.h introuvable (le pre-resolve a echoue ?)"
+          t = f.read_text()
+          if "S2_PRAGMA_PUSH_INVALID_SPEC" in t:
+              print("deja patche")
+          else:
+              pat = re.compile(r"#define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT\(TemplateName\).*?typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT", re.DOTALL)
+              assert pat.search(t), "bloc macro introuvable"
+                            new = r'''
+              #if defined(__clang__) && defined(__has_warning)
+              #if __has_warning("-Winvalid-specialization")
+              #define S2_PRAGMA_PUSH_INVALID_SPEC _Pragma("clang diagnostic push") _Pragma("clang diagnostic warning \"-Winvalid-specialization\"")
+              #define S2_PRAGMA_POP_INVALID_SPEC _Pragma("clang diagnostic pop")
+              #else
+              #define S2_PRAGMA_PUSH_INVALID_SPEC
+              #define S2_PRAGMA_POP_INVALID_SPEC
+              #endif
+              #else
+              #define S2_PRAGMA_PUSH_INVALID_SPEC
+              #define S2_PRAGMA_POP_INVALID_SPEC
+              #endif
+              #define PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT(TemplateName)             \
+                S2_PRAGMA_PUSH_INVALID_SPEC                                           \
+                namespace std {                                                       \
+                template <typename T> struct is_pod<TemplateName<T> > : std::is_trivial<T> { }; \
+                }                                                                      \
+                S2_PRAGMA_POP_INVALID_SPEC                                            \
+                typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT
+              '''
+              f.write_text(pat.sub(new, t))
+              print("patche OK")
+          PYEOF
+
       - name: Build (unsigned, pour sideload)
         run: |
           cd sources
