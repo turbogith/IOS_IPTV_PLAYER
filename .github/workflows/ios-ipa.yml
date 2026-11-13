@@ -52,6 +52,7 @@ jobs:
       - name: Build (unsigned, pour sideload)
         run: |
           cd sources
+          set -o pipefail
           xcodebuild \
             -project IPTV.xcodeproj \
             -scheme IPTV-iOS \
@@ -61,7 +62,15 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tail -n 30
+            build 2>&1 | tee build.log | tail -n 50
+
+      - name: Log de build (si echec)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: sources/build.log
+          retention-days: 14
 
       - name: Package .ipa
         run: |
