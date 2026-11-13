@@ -1,0 +1,101 @@
+name: build-ios-ipa
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle-id:
+        description: "Bundle ID de l'app (mets le tien, ex com.prenom.openiptv)"
+        default: "com.openiptv.app"
+        required: true
+
+concurrency:
+  group: ios-ipa
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Versions
+        run: |
+          flutter --version
+          pod --version
+
+      - name: Bundle ID perso
+        run: |
+          BID="${{ inputs.bundle-id }}"
+          PBX=ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = com\.openiptv\.app\.RunnerTests;/PRODUCT_BUNDLE_IDENTIFIER = ${BID}.RunnerTests;/g" "$PBX"
+          sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = com\.openiptv\.app;/PRODUCT_BUNDLE_IDENTIFIER = ${BID};/g" "$PBX"
+          grep -o 'PRODUCT_BUNDLE_IDENTIFIER = [^;]*;' "$PBX" | sort -u
+
+      - name: Cible iOS 15.0 (les plugins recents l'exigent)
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13\.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          grep -o 'IPHONEOS_DEPLOYMENT_TARGET = [^;]*;' ios/Runner.xcodeproj/project.pbxproj | sort -u
+
+      - name: Cree le Podfile iOS (absent du depot)
+        run: |
+          if [ ! -f ios/Podfile ]; then
+            cat > ios/Podfile <<'PODEOF'
+          platform :ios, '15.0'
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+          flutter_ios_podfile_setup
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+            target 'RunnerTests' do
+              inherit! :search_paths
+            end
+          end
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+            end
+          end
+          PODEOF
+          fi
+          head -3 ios/Podfile
+
+      - name: Dependances Flutter
+        run: flutter pub get
+
+      - name: Build IPA (non signe, pour sideload)
+        run: flutter build ipa --no-codesign --release
+
+      - name: Controle
+        run: |
+          ls -lh build/ios/ipa/
+          shasum -a 256 build/ios/ipa/*.ipa | tee sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenIPTV-ios-unsigned
+          path: |
+            build/ios/ipa/*.ipa
+            sha256.txt
+          retention-days: 14
