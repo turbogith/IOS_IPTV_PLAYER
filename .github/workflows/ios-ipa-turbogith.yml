@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       bundle-id:
-        description: "Bundle ID de l'app (mets le tien, ex com.prenom.iptv)"
-        default: "fr.meublin.IPTV"
+        description: "fr.turbo.IPTV"
+        default: "fr.turbo.IPTV"
         required: true
 
 concurrency:
