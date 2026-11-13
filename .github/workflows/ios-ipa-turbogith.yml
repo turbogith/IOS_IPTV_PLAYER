@@ -77,8 +77,9 @@ jobs:
 
       - name: Patch Realm s2 (std::is_pod interdit par Clang recent)
         run: |
+          chmod u+w sources/build/SourcePackages/checkouts/realm-core/src/external/s2/base/macros.h
           python3 - <<'PYEOF'
-          import pathlib, re
+          import os, pathlib, re
           f = pathlib.Path("sources/build/SourcePackages/checkouts/realm-core/src/external/s2/base/macros.h")
           assert f.exists(), "macros.h introuvable (le pre-resolve a echoue ?)"
           t = f.read_text()
@@ -109,6 +110,7 @@ jobs:
                   "  typedef int Dummy_Type_For_PROPAGATE_POD_FROM_TEMPLATE_ARGUMENT",
               ]
               new = "\n".join(lines) + "\n"
+              os.chmod(f, 0o644)
               f.write_text(pat.sub(lambda _m: new, t))
               print("patche OK")
           PYEOF
