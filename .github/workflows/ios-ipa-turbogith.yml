@@ -120,7 +120,7 @@ jobs:
           def idx_start(prefix):
               for i, l in enumerate(ls):
                   if l.startswith(prefix):
-                  return i
+                      return i
               raise AssertionError("introuvable: " + prefix)
           if not any(l.startswith("#define S2_PRAGMA_PUSH_INVALID_SPEC") for l in ls):
               k = idx_start("#define DECLARE_POD(TypeName)")
