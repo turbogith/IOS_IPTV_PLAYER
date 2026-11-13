@@ -18,8 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Xcode
-        run: xcodebuild -version
+      - name: Xcode 16 (Realm ne compile pas avec Xcode 26)
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE16=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$XCODE16" ]; then
+            echo "Selection: $XCODE16"
+            sudo xcode-select -s "$XCODE16"
+          else
+            echo "Pas de Xcode 16 trouve, on garde le defaut"
+          fi
+          xcodebuild -version
 
       - name: Remonte les sources si imbriquees dans un sous-dossier
         run: |
